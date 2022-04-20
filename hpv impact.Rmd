@@ -1,0 +1,285 @@
+---
+title: "HPV impact example"
+author: "Dan Weinberger"
+date: "April 19, 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(RColorBrewer)
+library(ggrepel)
+library(reshape2)
+library(ggplot2)
+
+```
+
+## Background
+In this exercise, we will learn how to fit and evaluate a change point model to surveillance data on high grae cervical lesions from Connecticut. The goal is to determine if the decline in disease rates in adults varies by age group. We expect that the decline will happen earliest in young woman and then as they age through their 20s, the rates will decline in successive years in older age groups.
+
+## Import the data
+```{r}
+# h1 <- read.csv('./Data/single_yearage11032016.csv')
+# pop1 <- read.csv('./Data/denomimators11032016.csv')
+# 
+# h2<-t(h1[,-1])
+# colnames(h2)<-paste0('age', 21:(20+ncol(h2)))
+# pop1<-pop1[,-1]
+# str(h2)
+# 
+# h2.m <- melt(h2)
+# h2.m$year <- as.numeric(substring(h2.m$Var1,2))
+# names(h2.m) <- c('var1', 'agec','cases','year')
+#   
+# pop1$year <- 2008:2015
+# pop.m <- melt(pop1, id.vars='year')
+# names(pop.m) <- c('year','agec','pop')
+# 
+# h3 <- merge(h2.m, pop.m, by=c('agec','year'), all=T)
+# h3 <- h3[,c('agec','year','cases','pop')]
+# saveRDS(h3, './Data/formatted_hpv.rds')
+
+h3 <- readRDS( './Data/formatted_hpv.rds')
+
+```
+
+
+Open the dataset
+```{r}
+View(h3)
+```
+
+
+## Let's pick a color palette for plotting
+
+The Colorbrewer package provides some nice palettes to choose from
+
+```{r, fig.height=10}
+#install.packages('RColorBrewer')
+display.brewer.all()
+```
+
+```{r}
+#Extend palette to cover 19 age groups
+cols1 = colorRampPalette(brewer.pal(n = 11, name = 'BrBG'))(19) 
+```
+
+Plot the raw data (incidence)
+```{r}
+#set up labels
+h3$agec_label <- h3$agec
+h3$agec_label[h3$year<2015] <- NA
+
+ggplot(h3, aes(x=year, y=cases/pop, group=agec, col=agec))+
+  geom_line() +
+  theme_classic()+
+    scale_colour_manual(values = cols1)+
+    theme(legend.position="none")+ #turns off legend
+  geom_text_repel( aes(label=agec_label)) #add non-overlapping labels
+
+```
+
+## Set up the linear splines
+There are 8 time points, so we will test out 8 different 'knots' when the decline can begin
+
+```{r}
+n.time.points <- 8
+
+h3$t <- h3$year - min(h3$year)
+
+#Create the splines (could also do this in a loop to be more efficient)
+h3$spl1 <- h3$t - 1
+h3$spl1[h3$spl1<0] <- 0
+
+h3$spl2 <- h3$t - 2
+h3$spl2[h3$spl2<0] <- 0
+
+h3$spl3 <- h3$t - 3
+h3$spl3[h3$spl3<0] <- 0
+
+h3$spl4 <- h3$t - 4
+h3$spl4[h3$spl4<0] <- 0
+
+h3$spl5 <- h3$t - 5
+h3$spl5[h3$spl5<0] <- 0
+
+h3$spl6 <- h3$t - 6
+h3$spl6[h3$spl6<0] <- 0
+
+
+```
+
+Let's look at what we just made
+```{r}
+h3.m <- melt(h3[,c(1,2,grep('spl',names(h3)))], id.vars=c('year','agec'))
+                
+ggplot(h3.m, aes(x=year, y=value, group=variable, color=variable))+
+geom_line() +
+  theme_classic()
+
+
+```
+
+# Let's fit a few regressions with these different knots
+Lets first just focus on the 21 year olds, with a single knot
+```{r, fig.height=3, fig.width=3}
+#To get a feel for it, let's try with the 21 year olds alone for one of the trends
+
+test.ds <- h3[h3$agec=='age21',]
+
+mod1<- glm( cases ~ spl1 + offset(log(pop)) , 
+           family='poisson', 
+           data=test.ds)
+
+summary(mod1)
+
+test.ds$pred1 <- predict(mod1, type='response')
+
+ggplot(test.ds, aes(x=year, y=pred1)) +
+  geom_line()+
+  geom_point(aes(x=year, y=cases),  col='red')+
+  theme_classic()
+
+```
+
+#Now let's compare a few different splines
+
+To do this, let's first create a function so we can easily iterate through different splines and age groups
+```{r, fig.width=9, fig.height=3}
+
+spl.function<- function(set.age='age21', set.spline='spl1'){
+    test.ds <- h3[h3$agec==set.age,]
+  
+    form1 <- as.formula(paste0('cases~' , set.spline, '+offset(log(pop))' ))
+    
+  mod1 <- glm( form1 , 
+             family='poisson', 
+             data=test.ds)
+  AIC1 <- AIC(mod1)
+  pred1 <- predict(mod1, type='response')
+  out.list=list('AIC1'=AIC1,'pred1'=pred1)
+  return(out.list)
+}
+```
+
+```{r}
+#which variables do we want to test?
+test.splines <- c('1','t','spl1','spl2','spl3','spl4','spl5','spl6')
+
+test.age21 <- lapply(test.splines,spl.function,set.age='age21')
+```
+
+Compare the AIC score from each of the models. The AIC score is best for the 3rd variable tested (spl1). This outperforms models where there is a straight trend, or the hinge comes 1 time point later
+You can see this from the plots as well
+```{r}
+aics.age21 <- sapply(test.age21,'[[', 'AIC1')
+aics.age21
+plot(aics.age21)
+```
+
+Can also plot the fitted values. we can see that some of the fitted lines match the data better than others.
+```{r}
+preds.age21 <-  sapply(test.age21,'[[', 'pred1')
+
+matplot(preds.age21, type='l', bty='l')
+points(test.ds$cases)
+```
+
+
+
+
+## Calculate model weights
+The next step is to convert these AIC scores to model weights
+
+```{r}
+best.aic <- min(aics.age21)
+
+w.aic<- exp(-0.5*(aics.age21-best.aic))/sum(exp(-0.5*(aics.age21-best.aic)))
+
+par(mfrow=c(1,1))
+plot(w.aic, type='l', bty='l', ylab='Model weight')
+```
+
+We can then color the fitted values based on their weight--darker=higher weight
+```{r}
+col.weight<-rgb(0,0,0,alpha=w.aic)
+matplot(preds.age21, type='l', col=col.weight, lty=1, bty='l')
+points(test.ds$cases)
+
+```
+
+#And we could also take a weighted average of these fitted values to get a single consensus
+
+```{r} 
+ ave.pred <- preds.age21 %*% matrix(w.aic, ncol=1) #matrix multiplication sum(pred * weight)
+
+ matplot(preds.age21, type='l', col=col.weight, lty=1, bty='l')
+points(test.ds$cases)
+ points(ave.pred, col='red', lwd=2, type='l')
+```
+
+## This gives result for 1 age group--we have 19
+Let's add another level to the function to cover all age groups. We are just going to repeat everything we did above, for each age group
+```{r}
+all.ages <- unique(h3$agec)
+
+mod.all.ages <- lapply(all.ages, function(x){
+  lapply(test.splines,spl.function,set.age=x)
+})
+```
+
+Extract all the AICs into a matrix; 1 column per age group, 1 row per model
+```{r}
+
+all.AICs <- sapply(mod.all.ages, function(x){
+  sapply(x, '[[', 'AIC1')
+})
+```
+Convert these to model weights
+```{r}
+all.weights <- apply(all.AICs,2, function(x){
+  best.aic <- min(x)
+  w.aic<- exp(-0.5*(x-best.aic))/sum(exp(-0.5*(x-best.aic)))
+  return(w.aic)
+})
+```
+## View the weights
+
+Some age groups just don't have strong evidence for any change point (weights evenly distributed across changes points). Others have a clear peak where the change occurs
+
+```{r}
+matplot(all.weights, type='l',col=cols1, bty='l')
+```
+
+
+
+## And extract the fitted values from all models
+```{r}
+all.preds <- sapply(mod.all.ages, function(x){
+  sapply(x, '[[', 'pred1', simplify='array')
+}, simplify='array')
+```
+
+#Averaged estimate for all age groups
+```{r}
+ave.preds <- matrix(NA, nrow=nrow(all.weights),
+                    ncol=ncol(all.weights))
+
+for(i in 1:19){
+  ave.preds[,i] <- all.preds[,,i] %*% matrix(all.weights[,i], ncol=1)
+}
+
+```
+
+
+
+## finally the averaged, fitted values for all age groups
+Plot fitted  incidence (fited cases/pop)
+```{r, fig.width=10, fig.height=4}
+par(mfrow=c(1,2))
+matplot(all.weights, type='l',col=cols1, bty='l', ylab='Weight')
+
+#Incidence
+matplot(ave.preds, type='l',col=cols1, bty='l', ylab="Fitted cases")
+```
+
