@@ -1,7 +1,7 @@
 ---
 title: "HPV impact example"
 author: "Dan Weinberger"
-date: "April 19, 2022"
+date: "April 19, 2023"
 output: html_document
 ---
 
@@ -11,6 +11,7 @@ library(RColorBrewer)
 library(ggrepel)
 library(reshape2)
 library(ggplot2)
+library(dplyr)
 
 ```
 
@@ -79,33 +80,24 @@ ggplot(h3, aes(x=year, y=cases/pop, group=agec, col=agec))+
 
 ```
 
-## Set up the linear splines
+### Set up the linear splines
 There are 8 time points, so we will test out 8 different 'knots' when the decline can begin
 
 ```{r}
 n.time.points <- 8
 
-h3$t <- h3$year - min(h3$year)
+#Create the splines 
 
-#Create the splines (could also do this in a loop to be more efficient)
-h3$spl1 <- h3$t - 1
-h3$spl1[h3$spl1<0] <- 0
-
-h3$spl2 <- h3$t - 2
-h3$spl2[h3$spl2<0] <- 0
-
-h3$spl3 <- h3$t - 3
-h3$spl3[h3$spl3<0] <- 0
-
-h3$spl4 <- h3$t - 4
-h3$spl4[h3$spl4<0] <- 0
-
-h3$spl5 <- h3$t - 5
-h3$spl5[h3$spl5<0] <- 0
-
-h3$spl6 <- h3$t - 6
-h3$spl6[h3$spl6<0] <- 0
-
+h3 <- h3 %>%
+  mutate( t = year - min(year),
+          spl1 = if_else(t>1, t-1, 0),
+          spl2 = if_else(t>2, t-2, 0),
+          spl3 = if_else(t>3, t-3, 0),
+          spl4 = if_else(t>4, t-4, 0),
+          spl5 = if_else(t>5, t-5, 0),
+          spl6 = if_else(t>6, t-6, 0),
+          
+          )
 
 ```
 
@@ -120,7 +112,7 @@ geom_line() +
 
 ```
 
-# Let's fit a few regressions with these different knots
+### Let's fit a few regressions with these different knots
 Lets first just focus on the 21 year olds, with a single knot
 ```{r, fig.height=3, fig.width=3}
 #To get a feel for it, let's try with the 21 year olds alone for one of the trends
@@ -142,7 +134,7 @@ ggplot(test.ds, aes(x=year, y=pred1)) +
 
 ```
 
-#Now let's compare a few different splines
+### Now let's compare a few different splines
 
 To do this, let's first create a function so we can easily iterate through different splines and age groups
 ```{r, fig.width=9, fig.height=3}
@@ -188,7 +180,7 @@ points(test.ds$cases)
 
 
 
-## Calculate model weights
+### Calculate model weights
 The next step is to convert these AIC scores to model weights
 
 ```{r}
@@ -208,7 +200,7 @@ points(test.ds$cases)
 
 ```
 
-#And we could also take a weighted average of these fitted values to get a single consensus
+### And we could also take a weighted average of these fitted values to get a single consensus
 
 ```{r} 
  ave.pred <- preds.age21 %*% matrix(w.aic, ncol=1) #matrix multiplication sum(pred * weight)
